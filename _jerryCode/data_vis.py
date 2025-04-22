@@ -7,8 +7,8 @@ from matplotlib import pyplot as plt
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
 # === 标注和图像路径 ===
-annotation_path = os.path.join(base_dir, "../data/annotations.json")  # 替换成你的 JSON 文件名
-image_root = os.path.join(base_dir, "../data")  # 图像主目录（包含 train/test/other）
+annotation_path = os.path.join(base_dir, "../../data/annotations.json")  # 替换成你的 JSON 文件名
+image_root = os.path.join(base_dir, "../../data")  # 图像主目录（包含 train/test/other）
 
 # === 加载标注数据 ===
 with open(annotation_path, "r") as f:
