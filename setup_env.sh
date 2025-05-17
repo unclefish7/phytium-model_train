@@ -18,3 +18,10 @@ pip install onnxruntime==1.8.1
 pip install thop==0.0.31-2005241907
 
 echo "环境安装完成！"
+
+# 替换mobilenetv4的yolo.py文件之后的训练命令
+python yolov5/train.py --img 640 --batch 16 --epochs 1 --data yolov5/data/tt100k.yaml --cfg yolov5/models/yolov5_MobileNetv4.yaml --weights yolov5s.pt --device 0 
+
+
+#原yolov5训练命令
+python yolov5/train.py --img 640 --batch 16 --epochs 1 --data yolov5/data/tt100k.yaml --cfg yolov5/models/yolov5n.yaml --weights yolov5s.pt --device 0  
