@@ -39,6 +39,7 @@ from models.common import (
     BottleneckCSP,
     C3Ghost,
     C3x,
+    C2f,
     Classify,
     Concat,
     Contract,
@@ -96,11 +97,17 @@ class Detect(nn.Module):
     def forward(self, x):
         """Processes input through YOLOv5 layers, altering shape for detection: `x(bs, 3, ny, nx, 85)`."""
         z = []  # inference output
+        if self.export_features:  # 为蒸馏提供中间特征
+            return self.features, self.cls_outputs, self.reg_outputs
         for i in range(self.nl):
             x[i] = self.m[i](x[i])  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
+            # 保存特征
+            self.features.append(x[i])
+
+            # 保存分类和回归输出，用于蒸馏
             if not self.training:  # inference
                 if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
                     self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
@@ -116,6 +123,10 @@ class Detect(nn.Module):
                     wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
                     y = torch.cat((xy, wh, conf), 4)
                 z.append(y.view(bs, self.na * nx * ny, self.no))
+            else:
+                # 保存分类输出和回归输出
+                self.cls_outputs.append(x[i][..., 5:])
+                self.reg_outputs.append(x[i][..., :4])
 
         return x if self.training else (torch.cat(z, 1),) if self.export else (torch.cat(z, 1), x)
 
@@ -293,11 +304,26 @@ class DetectionModel(BaseModel):
         self.info()
         LOGGER.info("")
 
-    def forward(self, x, augment=False, profile=False, visualize=False):
+    def forward(self, x, augment=False, profile=False, visualize=False, extract_features=False):
         """Performs single-scale or augmented inference and may include profiling or visualization."""
         if augment:
             return self._forward_augment(x)  # augmented inference, None
-        return self._forward_once(x, profile, visualize)  # single-scale inference, train
+        if extract_features:
+            # 设置Detect模块提取特征
+            for m in self.model:
+                if isinstance(m, Detect):
+                    m.export_features = True
+
+        # 正常前向传播
+        y = self._forward_once(x, profile=profile, visualize=visualize)
+
+        # 重置标志
+        if extract_features:
+            for m in self.model:
+                if isinstance(m, Detect):
+                    m.export_features = False
+
+        return y
 
     def _forward_augment(self, x):
         """Performs augmented inference across different scales and flips, returning combined detections."""

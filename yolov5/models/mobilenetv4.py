@@ -127,8 +127,8 @@ MNV4ConvMedium_BLOCK_SPECS = {
         "block_name": "convbn",
         "num_blocks": 2,
         "block_specs": [
-            [256, 960, 1, 1],
-            [960, 1280, 1, 1]
+            [128, 256, 1, 1],
+            [256, 256, 1, 1]
         ]
     }
 }
