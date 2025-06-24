@@ -1,5 +1,5 @@
-import torch
-print(f"PyTorch 版本: {torch.__version__}")
-print(f"CUDA 可用: {'是' if torch.cuda.is_available() else '否'}")
-if torch.cuda.is_available():
-    print(f"GPU 设备: {torch.cuda.get_device_name(0)}")
+from torchinfo import summary
+from models.experimental import attempt_load
+
+model = attempt_load('C:/Users/zzy/Desktop/model_optimized.onnx', map_location='cpu')  # 加载模型
+summary(model, input_size=(1, 3, 640, 640))  # 查看模型结构、参数量、通道数等
