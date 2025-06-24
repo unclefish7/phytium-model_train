@@ -1,14 +1,15 @@
 services:
   yolov5-dev:
-    image: yolov5:v1.0
+    image: yolov5:v2
     container_name: yolo
     runtime: nvidia
+    shm_size: 32g
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ./yolov5:/workspace/yolov5
       - ./model:/workspace/model
-      - ./yolo_dataset:/workspace/yolo_dataset
+      - ./yolo_dataset:/workspace/dataset
     working_dir: /workspace
     stdin_open: true
     tty: true
