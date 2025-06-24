@@ -91,14 +91,22 @@ class Detect(nn.Module):
         self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid
         self.anchor_grid = [torch.empty(0) for _ in range(self.nl)]  # init anchor grid
         self.register_buffer("anchors", torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
-        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
-        self.inplace = inplace  # use inplace ops (e.g. slice assignment)
+        self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv        self.inplace = inplace  # use inplace ops (e.g. slice assignment)
+        self.export_features = False
+        self.features = []  # 初始化特征列表
+        self.cls_outputs = []  # 初始化分类输出列表
+        self.reg_outputs = []  # 初始化回归输出列表
 
     def forward(self, x):
         """Processes input through YOLOv5 layers, altering shape for detection: `x(bs, 3, ny, nx, 85)`."""
         z = []  # inference output
+        self.features = []  # 重置特征列表
+        self.cls_outputs = []  # 重置分类输出列表
+        self.reg_outputs = []  # 重置回归输出列表
+        
         if self.export_features:  # 为蒸馏提供中间特征
             return self.features, self.cls_outputs, self.reg_outputs
+            
         for i in range(self.nl):
             x[i] = self.m[i](x[i])  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
