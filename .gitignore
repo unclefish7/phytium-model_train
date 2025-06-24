@@ -8,4 +8,4 @@ _jerryCode/
 resources/
 yolov5/runs/
 yolov5.zip
-
+__pycache__
