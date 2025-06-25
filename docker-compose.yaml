@@ -9,7 +9,7 @@ services:
     volumes:
       - ./yolov5:/workspace/yolov5
       - ./model:/workspace/model
-      - ./yolo_dataset:/workspace/dataset
+      - ./yolo_dataset/yolo_dataset_filtered_20:/workspace/dataset
     working_dir: /workspace
     stdin_open: true
     tty: true
