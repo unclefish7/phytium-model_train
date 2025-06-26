@@ -9,6 +9,7 @@ import numpy as np
 import json
 from collections import defaultdict
 import cv2
+import time
 
 
 def create_model(num_classes):
@@ -56,11 +57,17 @@ def classify_image(model, image_path, transform, device, class_names=None):
         image = Image.open(image_path).convert('RGB')
         input_tensor = transform(image).unsqueeze(0).to(device)
         
+        # Record inference time
+        start_time = time.time()
+        
         # Make prediction
         with torch.no_grad():
             outputs = model(input_tensor)
             probabilities = torch.softmax(outputs, dim=1)
             confidence, predicted = torch.max(probabilities, 1)
+        
+        # Calculate inference time
+        inference_time = time.time() - start_time
             
         predicted_class = predicted.item()
         confidence_score = confidence.item()
@@ -78,7 +85,8 @@ def classify_image(model, image_path, transform, device, class_names=None):
             'predicted_class': predicted_class,
             'predicted_class_name': class_names[predicted_class] if class_names else f"Class_{predicted_class}",
             'confidence': confidence_score,
-            'top5_predictions': top5_predictions
+            'top5_predictions': top5_predictions,
+            'inference_time': inference_time
         }
     except Exception as e:
         print(f"Error processing {image_path}: {str(e)}")
@@ -103,13 +111,15 @@ def classify_images_in_directory(model, image_dir, transform, device, class_name
     
     # Classify each image
     for i, image_path in enumerate(image_files):
-        print(f"Processing ({i+1}/{len(image_files)}): {os.path.basename(image_path)}")
-        
         result = classify_image(model, image_path, transform, device, class_names)
         if result:
             result['image_path'] = image_path
             result['image_name'] = os.path.basename(image_path)
             results.append(result)
+            
+            # Print progress with inference time
+            print(f"Processing ({i+1}/{len(image_files)}): {os.path.basename(image_path)} - "
+                  f"Inference time: {result['inference_time']:.4f}s")
     
     return results
 
@@ -255,6 +265,7 @@ def save_results_json(results, output_path):
             'predicted_class': result['predicted_class'],
             'predicted_class_name': result['predicted_class_name'],
             'confidence': float(result['confidence']),
+            'inference_time': float(result['inference_time']),
             'top5_predictions': [(name, float(prob)) for name, prob in result['top5_predictions']]
         }
         json_results.append(json_result)
@@ -309,6 +320,59 @@ def print_classification_summary(results):
     print("-" * 30)
     print(f"High confidence (≥{high_conf_threshold}): {high_conf_count} images ({high_conf_count/total_images*100:.1f}%)")
     print(f"Low confidence (<{low_conf_threshold}): {low_conf_count} images ({low_conf_count/total_images*100:.1f}%)")
+
+
+def print_inference_time_statistics(results):
+    """Print inference time statistics"""
+    if not results:
+        print("No inference time data to analyze.")
+        return
+    
+    # Extract inference times
+    inference_times = [r['inference_time'] for r in results]
+    
+    # Calculate statistics
+    mean_time = np.mean(inference_times)
+    median_time = np.median(inference_times)
+    std_time = np.std(inference_times)
+    min_time = np.min(inference_times)
+    max_time = np.max(inference_times)
+    percentile_95 = np.percentile(inference_times, 95)
+    percentile_99 = np.percentile(inference_times, 99)
+    
+    # Calculate throughput (images per second)
+    total_time = np.sum(inference_times)
+    throughput = len(inference_times) / total_time
+    
+    print("\n" + "="*60)
+    print("Inference Time Statistics")
+    print("="*60)
+    
+    print(f"Total images processed: {len(inference_times)}")
+    print(f"Total inference time: {total_time:.3f}s")
+    print(f"Throughput: {throughput:.2f} images/second")
+    
+    print("\nPer-image inference time statistics:")
+    print("-" * 40)
+    print(f"Mean:           {mean_time:.4f}s ({mean_time*1000:.2f}ms)")
+    print(f"Median:         {median_time:.4f}s ({median_time*1000:.2f}ms)")
+    print(f"Standard dev:   {std_time:.4f}s ({std_time*1000:.2f}ms)")
+    print(f"Min:            {min_time:.4f}s ({min_time*1000:.2f}ms)")
+    print(f"Max:            {max_time:.4f}s ({max_time*1000:.2f}ms)")
+    print(f"95th percentile: {percentile_95:.4f}s ({percentile_95*1000:.2f}ms)")
+    print(f"99th percentile: {percentile_99:.4f}s ({percentile_99*1000:.2f}ms)")
+    
+    # Find fastest and slowest images
+    fastest_idx = np.argmin(inference_times)
+    slowest_idx = np.argmax(inference_times)
+    
+    print("\nFastest inference:")
+    print(f"  Image: {results[fastest_idx]['image_name']}")
+    print(f"  Time: {results[fastest_idx]['inference_time']:.4f}s")
+    
+    print("\nSlowest inference:")
+    print(f"  Image: {results[slowest_idx]['image_name']}")
+    print(f"  Time: {results[slowest_idx]['inference_time']:.4f}s")
 
 
 def get_class_names_from_checkpoint(model_path):
@@ -381,6 +445,9 @@ def main():
     
     # Print summary
     print_classification_summary(results)
+    
+    # Print inference time statistics
+    print_inference_time_statistics(results)
     
     # Save results to JSON
     json_path = os.path.join(args.output_dir, 'classification_results.json')

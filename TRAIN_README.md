@@ -8,11 +8,11 @@ python train.py --batch-size 4 --epochs 200 --name simple_net_one_cls --cfg mode
 ```
 
 ```bash
-python detect.py --weights runs/train/simple_net_small_dataset_3/weights/best.pt --source /workspace/dataset/images/test  --img 2048
+python detect.py --weights runs/train/simple_net_one_cls/weights/best.pt --source /workspace/dataset/images/test  --img 2048
 ```
 
 ```bash
-python val.py --weights runs/train/simple_net_small_dataset_3/weights/best.pt --data /workspace/dataset/tt100k.yaml --img 2048 --device 0 --batch-size 4
+python val.py --weights runs/train/simple_net_one_cls/weights/best.pt --data /workspace/dataset/tt100k.yaml --img 2048 --device 0 --batch-size 4
 ```
 
 # 自己写的分类器的训练命令
