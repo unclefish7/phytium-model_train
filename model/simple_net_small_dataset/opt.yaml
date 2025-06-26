@@ -1,0 +1,72 @@
+weights: runs/train/simple_net_small_dataset_3/weights/last.pt
+cfg: ''
+data: /workspace/dataset/tt100k.yaml
+hyp:
+  lr0: 0.02
+  lrf: 0.1
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  box: 0.1
+  cls: 0.5
+  cls_pw: 1.0
+  obj: 1.5
+  obj_pw: 1.0
+  iou_t: 0.2
+  anchor_t: 4.0
+  fl_gamma: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.4
+  hsv_v: 0.4
+  degrees: 0.0
+  translate: 0.05
+  scale: 0.3
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.3
+  mosaic: 0.2
+  mixup: 0.0
+  copy_paste: 0.0
+epochs: 256
+batch_size: 4
+imgsz: 2048
+rect: false
+resume: true
+nosave: false
+noval: false
+noautoanchor: false
+noplots: false
+evolve: null
+evolve_population: data/hyps
+resume_evolve: null
+bucket: ''
+cache: null
+image_weights: true
+device: '0'
+multi_scale: false
+single_cls: false
+optimizer: SGD
+sync_bn: false
+workers: 8
+project: runs/train
+name: simple_net_small_dataset_
+exist_ok: false
+quad: false
+cos_lr: false
+label_smoothing: 0.0
+patience: 100
+freeze:
+- 0
+save_period: -1
+seed: 0
+local_rank: -1
+entity: null
+upload_dataset: false
+bbox_interval: -1
+artifact_alias: latest
+ndjson_console: false
+ndjson_file: false
+save_dir: runs/train/simple_net_small_dataset_3
