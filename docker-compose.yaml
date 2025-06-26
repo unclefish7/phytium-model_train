@@ -1,6 +1,6 @@
 services:
   yolov5-dev:
-    image: yolov5:v2
+    image: yolov5:v3
     container_name: yolo
     runtime: nvidia
     shm_size: 32g
@@ -8,8 +8,10 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ./yolov5:/workspace/yolov5
+      - ./traffic_sign_classifier:/workspace/traffic_sign_classifier
       - ./model:/workspace/model
       - ./yolo_dataset/yolo_dataset_one_cls:/workspace/dataset
+      - ./yolo_dataset/yolo_dataset_classify:/workspace/dataset_classify
     working_dir: /workspace
     stdin_open: true
     tty: true

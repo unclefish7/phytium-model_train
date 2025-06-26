@@ -9,3 +9,4 @@ resources/
 yolov5/runs/
 yolov5.zip
 __pycache__
+traffic_sign_classifier/models/

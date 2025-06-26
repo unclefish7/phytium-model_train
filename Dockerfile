@@ -2,7 +2,7 @@ FROM pytorch/pytorch:2.6.0-cuda12.6-cudnn9-devel
 
 # 安装系统依赖
 RUN apt-get update && apt-get install -y \
-    ffmpeg git htop libgl1 net-tools tmux unzip wget \
+    ffmpeg git htop libgl1 net-tools tmux unzip vim wget \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
@@ -13,6 +13,7 @@ COPY yolov5/requirements.txt ./requirements.txt
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt && \
     pip install timm && \
+    pip install matplotlib numpy scikit-learn tqdm && \
     python --version
 
 # 写入 tmux 配置文件，开启鼠标支持 + 分屏热键优化
