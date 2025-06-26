@@ -26,7 +26,8 @@ OUTPUT_WIDTH = 128   # 输出图像宽度（像素）
 OUTPUT_HEIGHT = 128  # 输出图像高度（像素）
 
 # 类别过滤配置
-MIN_SAMPLES_PER_CLASS = 50  # 每个类别的最小样本数量，低于此数量的类别将被过滤
+MIN_SAMPLES_PER_CLASS = 200  # 每个类别的最小样本数量，低于此数量的类别将被过滤
+MERGE_THRESHOLD = 200        # 类别合并阈值，低于此数量的类别会尝试合并
 
 print("=" * 80)
 print("🚦 TT100K 交通标志分类数据集生成工具")
@@ -37,7 +38,7 @@ print(f"📄 标注文件: {ANNO_PATH}")
 print(f"📁 输出目录: {OUTPUT_DIR}")
 print(f"🔧 裁剪参数: padding={PADDING_RATIO*100:.0f}%, 最小尺寸={MIN_WIDTH}x{MIN_HEIGHT}")
 print(f"📐 输出图像尺寸: {OUTPUT_WIDTH}x{OUTPUT_HEIGHT}")
-print(f"🔍 类别过滤: 最少样本数={MIN_SAMPLES_PER_CLASS}")
+print(f"🔍 类别过滤: 最少样本数={MIN_SAMPLES_PER_CLASS}, 合并阈值={MERGE_THRESHOLD}")
 print("-" * 80)
 
 # 检查输入文件是否存在
@@ -82,13 +83,128 @@ for i, (category, count) in enumerate(sorted_categories[:10]):
 if len(sorted_categories) > 10:
     print(f"   ... 还有 {len(sorted_categories) - 10} 个类别")
 
+# ========== 类别合并处理 ==========
+print(f"\n🔄 正在处理类别合并（合并阈值: {MERGE_THRESHOLD}）...")
+
+def extract_base_category(category):
+    """
+    提取类别的基础名称（去除数字）
+    例如: p50 -> p, w37 -> w, pl100 -> pl
+    """
+    import re
+    # 匹配字母开头，后面跟数字的模式
+    match = re.match(r'^([a-zA-Z]+)', category)
+    if match:
+        return match.group(1)
+    return category
+
+# 创建类别映射表（原类别 -> 合并后类别）
+category_mapping = {}
+merged_category_stats = defaultdict(int)
+
+# 先识别需要合并的类别
+categories_to_merge = {}  # 基础类别名 -> [具体类别列表]
+standalone_categories = {}  # 独立类别
+
+for category, count in category_stats.items():
+    base_category = extract_base_category(category)
+    
+    if count >= MERGE_THRESHOLD:
+        # 样本量足够，作为独立类别
+        standalone_categories[category] = count
+        category_mapping[category] = category
+        merged_category_stats[category] = count
+    else:
+        # 样本量不足，需要合并
+        if base_category not in categories_to_merge:
+            categories_to_merge[base_category] = []
+        categories_to_merge[base_category].append((category, count))
+
+# 处理需要合并的类别
+merge_info = []
+for base_category, category_list in categories_to_merge.items():
+    # 计算合并后的总数量
+    total_count = sum(count for _, count in category_list)
+    
+    # 确定合并后的类别名称
+    merged_name = base_category + 'o'
+    
+    # 检查是否与已有的独立类别冲突
+    if merged_name in standalone_categories:
+        # 如果冲突，合并到已有类别
+        merged_category_stats[merged_name] += total_count
+        standalone_categories[merged_name] += total_count
+    else:
+        # 创建新的合并类别
+        merged_category_stats[merged_name] = total_count
+    
+    # 更新映射关系
+    for category, count in category_list:
+        category_mapping[category] = merged_name
+    
+    merge_info.append((base_category, category_list, merged_name, total_count))
+
+# 显示合并信息
+if merge_info:
+    print("🔗 类别合并信息:")
+    for base_category, category_list, merged_name, total_count in merge_info:
+        category_names = [f"{cat}({cnt})" for cat, cnt in category_list]
+        print(f"   {base_category}: {', '.join(category_names)} -> {merged_name}({total_count})")
+else:
+    print("📋 无需合并的类别")
+
+print("📊 合并后统计:")
+print(f"   - 合并前类别数: {len(category_stats)}")
+print(f"   - 合并后类别数: {len(merged_category_stats)}")
+print(f"   - 独立类别数: {len(standalone_categories)}")
+print(f"   - 合并组数: {len(merge_info)}")
+
 # ========== 过滤样本量过少的类别 ==========
 print(f"\n🔍 正在过滤样本量少于 {MIN_SAMPLES_PER_CLASS} 的类别...")
-valid_categories = {cat: count for cat, count in category_stats.items() if count >= MIN_SAMPLES_PER_CLASS}
-filtered_categories = {cat: count for cat, count in category_stats.items() if count < MIN_SAMPLES_PER_CLASS}
+valid_categories = {cat: count for cat, count in merged_category_stats.items() if count >= MIN_SAMPLES_PER_CLASS}
+insufficient_categories = {cat: count for cat, count in merged_category_stats.items() if count < MIN_SAMPLES_PER_CLASS}
 
 print(f"✅ 保留类别: {len(valid_categories)} 个")
-print(f"❌ 过滤类别: {len(filtered_categories)} 个")
+print(f"❌ 数量不足类别: {len(insufficient_categories)} 个")
+
+# ========== 二次合并处理 ==========
+if insufficient_categories:
+    print("\n🔄 正在进行二次合并（将数量不足的类别合并为 'o' 类别）...")
+    
+    # 计算合并到 'o' 类别的总数量
+    total_o_count = sum(insufficient_categories.values())
+    
+    print("🔗 二次合并信息:")
+    print(f"   合并类别: {list(insufficient_categories.keys())}")
+    print(f"   合并前总数: {total_o_count}")
+    
+    # 检查是否已存在 'o' 类别
+    if 'o' in valid_categories:
+        # 如果已存在，合并到现有的 'o' 类别
+        valid_categories['o'] += total_o_count
+        print(f"   合并到现有 'o' 类别，合并后数量: {valid_categories['o']}")
+    else:
+        # 如果不存在，创建新的 'o' 类别
+        valid_categories['o'] = total_o_count
+        print(f"   创建新的 'o' 类别，数量: {valid_categories['o']}")
+    
+    # 更新类别映射：将所有数量不足的类别映射到 'o'
+    for insufficient_cat in insufficient_categories.keys():
+        # 找到所有映射到这个不足类别的原始类别，重新映射到 'o'
+        for orig_cat, mapped_cat in category_mapping.items():
+            if mapped_cat == insufficient_cat:
+                category_mapping[orig_cat] = 'o'
+    
+    # 清空不足类别列表（因为已经合并了）
+    filtered_categories = {}
+    
+    print("📊 二次合并后统计:")
+    print(f"   - 最终有效类别数: {len(valid_categories)}")
+    print("   - 完全过滤的类别数: 0")
+    print(f"   - 'o' 类别样本数: {valid_categories.get('o', 0)}")
+else:
+    filtered_categories = insufficient_categories
+    print("\n📋 无需二次合并")
 
 if filtered_categories:
     print("🗑️  被过滤的类别:")
@@ -194,9 +310,15 @@ for img_id, img_info in tqdm(data['imgs'].items(), desc="处理图像"):
         
         # 处理该图像中的所有标注对象
         for obj_idx, obj in enumerate(img_info['objects']):
-            category = obj.get('category', 'unknown')
+            original_category = obj.get('category', 'unknown')
             
-            # 跳过样本量过少的类别
+            # 获取合并后的类别名称
+            if original_category in category_mapping:
+                category = category_mapping[original_category]
+            else:
+                category = original_category
+            
+            # 跳过样本量过少的类别（合并后仍不足的类别）
             if category not in valid_categories:
                 skipped_objects += 1
                 continue
@@ -290,6 +412,7 @@ print("   - 每个类别的图像保存在对应的子目录中")
 print("   - 图像命名格式: <原图名>_<对象编号>.jpg")
 print(f"   - 裁剪时添加了 {PADDING_RATIO*100:.0f}% 的边距")
 print(f"   - 过滤了尺寸小于 {MIN_WIDTH}x{MIN_HEIGHT} 的对象")
-print(f"   - 过滤了样本数少于 {MIN_SAMPLES_PER_CLASS} 的类别")
+print(f"   - 样本数少于 {MERGE_THRESHOLD} 的类别已合并为 [类别名]o 形式")
+print(f"   - 合并后仍少于 {MIN_SAMPLES_PER_CLASS} 的类别进一步合并为 'o' 类别")
 print(f"   - 所有输出图像统一调整为 {OUTPUT_WIDTH}x{OUTPUT_HEIGHT} 尺寸")
 print("=" * 80)
