@@ -24,6 +24,9 @@ python val.py --weights runs/train/simple_net_small_dataset_3/weights/best.pt --
 # 基本训练命令 - 自动按8:2分割训练和验证数据
 python train.py --data-dir /workspace/dataset_classify --epochs 50 --batch-size 512 --lr 0.008 --model-path ./models/best_classifier.pth
 
+# 继续训练
+python train.py --data-dir /workspace/dataset_classify --epochs 100 --batch-size 512 --lr 0.008 --model-path ./models/best_classifier.pth --resume ./models/best_classifier_epoch_20.pth
+
 # 自定义分割比例
 python traffic_sign_classifier/train.py --data-dir /workspace/dataset_classify --train-ratio 0.7 --val-ratio 0.3 --epochs 100 --batch-size 16 --lr 0.0005 --model-path best_classifier_100epoch.pth
 
@@ -43,11 +46,28 @@ python traffic_sign_classifier/test.py --data-dir /workspace/dataset_classify --
 python traffic_sign_classifier/test.py --data-dir /workspace/dataset_classify --use-remaining --model-path best_classifier.pth --save-cm confusion_matrix.png
 ```
 
+### 检测模型
+```bash
+# 基本用法
+python classify.py \
+    --model-path ./models/best_classifier.pth \
+    --image-dir /workspace/dataset_classify \
+    --output-dir ./classification_results
 
+# 指定类别名称
+python traffic_sign_classifier/classify.py \
+    --model-path ./models/best_classifier.pth \
+    --image-dir /path/to/test/images \
+    --output-dir ./classification_results \
+    --class-names "禁止通行" "限速标志" "警告标志" "指示标志"
 
-
-
-
+# 自定义可视化参数
+python traffic_sign_classifier/classify.py \
+    --model-path ./models/best_classifier.pth \
+    --image-dir /path/to/test/images \
+    --output-dir ./classification_results \
+    --max-vis-per-class 15
+```
 
 ## 继续训练（Resume Training）
 ```bash
