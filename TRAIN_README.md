@@ -47,7 +47,7 @@ python traffic_sign_classifier/test.py --test-dir /workspace/dataset_classify/te
 python train.py \
     --train-dir /workspace/dataset_classify \
     --val-dir /workspace/dataset_classify \
-    --epochs 50 \
+    --epochs 100 \
     --batch-size 512 \
     --lr 0.008 \
     --model-path ./models/traffic_sign_best.pth
@@ -63,9 +63,9 @@ python test.py \
 ## 继续训练（Resume Training）
 ```bash
 # 从已有模型继续训练
-python traffic_sign_classifier/train.py \
-    --train-dir /workspace/dataset_classify/train \
-    --val-dir /workspace/dataset_classify/val \
+python train.py \
+    --train-dir /workspace/dataset_classify \
+    --val-dir /workspace/dataset_classify \
     --epochs 100 \
     --batch-size 32 \
     --lr 0.0005 \
