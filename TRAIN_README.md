@@ -17,48 +17,37 @@ python val.py --weights runs/train/simple_net_small_dataset_3/weights/best.pt --
 
 # 自己写的分类器的训练命令
 
-## 训练模型
-```bash
-# 基本训练命令
-python traffic_sign_classifier/train.py --train-dir /workspace/dataset_classify/train --val-dir /workspace/dataset_classify/val --epochs 50 --batch-size 32 --lr 0.001 --model-path best_classifier.pth
+## 新的使用方式 - 自动数据分割
 
-# 更长时间训练以获得更好效果
-python traffic_sign_classifier/train.py --train-dir /workspace/dataset_classify/train --val-dir /workspace/dataset_classify/val --epochs 100 --batch-size 16 --lr 0.0005 --model-path best_classifier_100epoch.pth
+### 训练模型（推荐）
+```bash
+# 基本训练命令 - 自动按8:2分割训练和验证数据
+python train.py --data-dir /workspace/dataset_classify --epochs 50 --batch-size 512 --lr 0.008 --model-path ./models/best_classifier.pth
+
+# 自定义分割比例
+python traffic_sign_classifier/train.py --data-dir /workspace/dataset_classify --train-ratio 0.7 --val-ratio 0.3 --epochs 100 --batch-size 16 --lr 0.0005 --model-path best_classifier_100epoch.pth
 
 # 小批次训练（适用于显存较小的情况）
-python traffic_sign_classifier/train.py --train-dir /workspace/dataset_classify/train --val-dir /workspace/dataset_classify/val --epochs 80 --batch-size 8 --lr 0.001 --model-path best_classifier_small_batch.pth
+python traffic_sign_classifier/train.py --data-dir /workspace/dataset_classify --epochs 80 --batch-size 8 --lr 0.001 --model-path best_classifier_small_batch.pth
 ```
 
-## 测试模型
+### 测试模型（推荐）
 ```bash
-# 基本测试命令
-python traffic_sign_classifier/test.py --test-dir /workspace/dataset_classify/test --model-path best_classifier.pth --batch-size 32 --save-cm confusion_matrix.png
+# 基本测试命令 - 使用20%的数据作为测试集
+python test.py --data-dir /workspace/dataset_classify --model-path ./models/best_classifier.pth --batch-size 32 --save-cm ./test/confusion_matrix.png
 
-# 测试特定模型并保存结果到指定位置
-python traffic_sign_classifier/test.py --test-dir /workspace/dataset_classify/test --model-path best_classifier_100epoch.pth --batch-size 16 --save-cm results/confusion_matrix_100epoch.png
+# 自定义测试集比例
+python traffic_sign_classifier/test.py --data-dir /workspace/dataset_classify --test-ratio 0.15 --model-path best_classifier.pth --save-cm confusion_matrix.png
 
-# 小批次测试
-python traffic_sign_classifier/test.py --test-dir /workspace/dataset_classify/test --model-path best_classifier.pth --batch-size 8 --save-cm confusion_matrix_detailed.png
+# 使用剩余数据作为测试集（与训练时使用不同的分割）
+python traffic_sign_classifier/test.py --data-dir /workspace/dataset_classify --use-remaining --model-path best_classifier.pth --save-cm confusion_matrix.png
 ```
 
-## 完整训练+测试流程示例
-```bash
-# 1. 训练模型
-python train.py \
-    --train-dir /workspace/dataset_classify \
-    --val-dir /workspace/dataset_classify \
-    --epochs 100 \
-    --batch-size 512 \
-    --lr 0.008 \
-    --model-path ./models/traffic_sign_best.pth
 
-# 2. 测试模型性能
-python test.py \
-    --test-dir /workspace/dataset_classify \
-    --model-path traffic_sign_best.pth \
-    --batch-size 32 \
-    --save-cm ./tests/traffic_sign_confusion_matrix.png
-```
+
+
+
+
 
 ## 继续训练（Resume Training）
 ```bash
@@ -103,3 +92,40 @@ python traffic_sign_classifier/train.py \
 - mAP@50 和 mAP@50:95 指标
 - 每个类别的详细指标（精确率、召回率、F1、AP）
 - 混淆矩阵可视化
+
+## 数据集结构要求
+
+### 新方式（推荐）
+只需要一个包含所有数据的目录：
+```
+dataset_classify/
+├── class1/
+│   ├── image1.jpg
+│   ├── image2.jpg
+│   └── ...
+├── class2/
+│   ├── image1.jpg
+│   └── ...
+└── class3/
+    ├── image1.jpg
+    └── ...
+```
+
+程序会自动按比例分割数据：
+- 默认：80% 训练，20% 验证
+- 测试时可以使用剩余数据或指定比例
+
+### 旧方式（仍然支持）
+手动分割的目录结构：
+```
+dataset_classify/
+├── train/
+│   ├── class1/
+│   └── class2/
+├── val/
+│   ├── class1/
+│   └── class2/
+└── test/
+    ├── class1/
+    └── class2/
+```

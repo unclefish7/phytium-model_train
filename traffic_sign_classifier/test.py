@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms, models
 import argparse
 import os
@@ -17,18 +17,53 @@ def create_model(num_classes):
     return model
 
 
-def get_test_loader(test_dir, batch_size=32):
-    """Create test data loader"""
+def get_test_loader(data_dir, batch_size=32, test_ratio=0.2, use_remaining=True):
+    """Create test data loader with automatic split"""
     test_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    test_dataset = datasets.ImageFolder(test_dir, transform=test_transform)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    # Create full dataset
+    full_dataset = datasets.ImageFolder(data_dir, transform=test_transform)
+    total_size = len(full_dataset)
     
-    return test_loader, test_dataset.classes
+    if use_remaining:
+        # Use the remaining data (after train/val split) as test set
+        # Assuming train=0.8, val=0.2 from training, we use a different split for test
+        torch.manual_seed(42)  # Same seed as training for consistency
+        train_size = int(0.8 * total_size)
+        val_size = int(0.2 * total_size)
+        test_size = total_size - train_size - val_size
+        
+        if test_size <= 0:
+            # If no remaining data, use the specified test_ratio
+            test_size = int(test_ratio * total_size)
+            other_size = total_size - test_size
+            _, test_indices = random_split(range(total_size), [other_size, test_size])
+        else:
+            # Use all three splits
+            train_indices, val_indices, test_indices = random_split(
+                range(total_size), [train_size, val_size, test_size]
+            )
+    else:
+        # Use specified test ratio
+        test_size = int(test_ratio * total_size)
+        other_size = total_size - test_size
+        _, test_indices = random_split(range(total_size), [other_size, test_size])
+    
+    print(f"Total samples: {total_size}")
+    print(f"Test samples: {len(test_indices.indices) if hasattr(test_indices, 'indices') else len(test_indices)}")
+    
+    # Create subset dataset
+    test_subset = torch.utils.data.Subset(full_dataset, 
+                                         test_indices.indices if hasattr(test_indices, 'indices') else test_indices)
+    
+    # Create data loader
+    test_loader = DataLoader(test_subset, batch_size=batch_size, shuffle=False, num_workers=4)
+    
+    return test_loader, full_dataset.classes
 
 
 def load_model(model_path, device):
@@ -231,16 +266,19 @@ def print_detailed_results(metrics, class_names):
 
 def main():
     parser = argparse.ArgumentParser(description='Test image classifier')
-    parser.add_argument('--test-dir', type=str, required=True, help='Test data path')
+    parser.add_argument('--data-dir', type=str, required=True, help='Dataset directory path')
+    parser.add_argument('--test-ratio', type=float, default=0.2, help='Test data ratio (default: 0.2)')
+    parser.add_argument('--use-remaining', action='store_true', default=False, 
+                       help='Use remaining data after train/val split as test set')
     parser.add_argument('--model-path', type=str, default='best.pth', help='Model file path')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size')
     parser.add_argument('--save-cm', type=str, default='confusion_matrix.png', help='Confusion matrix save path')
     
     args = parser.parse_args()
     
-    # Check test data path
-    if not os.path.exists(args.test_dir):
-        raise ValueError(f"Test data path does not exist: {args.test_dir}")
+    # Check data directory
+    if not os.path.exists(args.data_dir):
+        raise ValueError(f"Data directory does not exist: {args.data_dir}")
     
     # Auto select device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -250,7 +288,8 @@ def main():
     model, num_classes = load_model(args.model_path, device)
     
     # Create test data loader
-    test_loader, class_names = get_test_loader(args.test_dir, args.batch_size)
+    test_loader, class_names = get_test_loader(args.data_dir, args.batch_size, 
+                                              args.test_ratio, args.use_remaining)
     print(f"Test data classes: {class_names}")
     print(f"Number of test samples: {len(test_loader.dataset)}")
     

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms, models
 import argparse
 import os
@@ -17,8 +17,8 @@ def create_model(num_classes):
     return model
 
 
-def get_data_loaders(train_dir, val_dir, batch_size=32):
-    """Create data loaders"""
+def get_data_loaders(data_dir, batch_size=32, train_ratio=0.8, val_ratio=0.2):
+    """Create data loaders with automatic train/val split"""
     # Data preprocessing
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -34,15 +34,37 @@ def get_data_loaders(train_dir, val_dir, batch_size=32):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    # Create datasets
-    train_dataset = datasets.ImageFolder(train_dir, transform=train_transform)
-    val_dataset = datasets.ImageFolder(val_dir, transform=val_transform)
+    # Create full dataset first
+    full_dataset = datasets.ImageFolder(data_dir, transform=None)
+    
+    # Calculate split sizes
+    total_size = len(full_dataset)
+    train_size = int(train_ratio * total_size)
+    val_size = total_size - train_size
+    
+    print(f"Total samples: {total_size}")
+    print(f"Train samples: {train_size} ({train_ratio:.1%})")
+    print(f"Validation samples: {val_size} ({val_ratio:.1%})")
+    
+    # Split indices
+    torch.manual_seed(42)  # For reproducible splits
+    train_indices, val_indices = random_split(
+        range(total_size), [train_size, val_size]
+    )
+    
+    # Create separate datasets with different transforms
+    train_dataset = datasets.ImageFolder(data_dir, transform=train_transform)
+    val_dataset = datasets.ImageFolder(data_dir, transform=val_transform)
+    
+    # Create subset datasets
+    train_subset = torch.utils.data.Subset(train_dataset, train_indices.indices)
+    val_subset = torch.utils.data.Subset(val_dataset, val_indices.indices)
     
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=4)
     
-    return train_loader, val_loader, len(train_dataset.classes)
+    return train_loader, val_loader, len(full_dataset.classes)
 
 
 def train_epoch(model, train_loader, criterion, optimizer, device):
@@ -200,8 +222,9 @@ def calculate_ap(y_true, y_scores):
 
 def main():
     parser = argparse.ArgumentParser(description='Train image classifier')
-    parser.add_argument('--train-dir', type=str, required=True, help='Training data path')
-    parser.add_argument('--val-dir', type=str, required=True, help='Validation data path')
+    parser.add_argument('--data-dir', type=str, required=True, help='Dataset directory path')
+    parser.add_argument('--train-ratio', type=float, default=0.8, help='Training data ratio (default: 0.8)')
+    parser.add_argument('--val-ratio', type=float, default=0.2, help='Validation data ratio (default: 0.2)')
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
@@ -210,11 +233,13 @@ def main():
     
     args = parser.parse_args()
     
-    # Check if paths exist
-    if not os.path.exists(args.train_dir):
-        raise ValueError(f"Training data path does not exist: {args.train_dir}")
-    if not os.path.exists(args.val_dir):
-        raise ValueError(f"Validation data path does not exist: {args.val_dir}")
+    # Validate ratios
+    if abs(args.train_ratio + args.val_ratio - 1.0) > 1e-6:
+        raise ValueError(f"Train ratio ({args.train_ratio}) + Val ratio ({args.val_ratio}) must equal 1.0")
+    
+    # Check if data directory exists
+    if not os.path.exists(args.data_dir):
+        raise ValueError(f"Data directory does not exist: {args.data_dir}")
     
     # Auto select device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -222,7 +247,7 @@ def main():
     
     # Create data loaders
     train_loader, val_loader, num_classes = get_data_loaders(
-        args.train_dir, args.val_dir, args.batch_size
+        args.data_dir, args.batch_size, args.train_ratio, args.val_ratio
     )
     print(f"Number of classes: {num_classes}")
     
