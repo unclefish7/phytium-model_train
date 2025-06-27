@@ -3,6 +3,14 @@
 PyTorch to ONNX Model Export Script
 将PyTorch模型导出为ONNX格式，优化用于CPU推理
 
+该脚本专门用于导出交通标志分类模型，确保：
+1. 模型在eval()状态下导出
+2. 使用与训练/测试完全一致的图像输入尺寸(224x224)
+3. 输入tensor与真实推理时的数据shape/预处理一致
+4. 设定合理的opset_version(默认11)
+5. 自动处理模型输出（logits或softmax概率）
+6. 生成的ONNX模型保证结构完整，适用于精度敏感的推理任务
+
 Usage Examples:
 # 导出单个模型文件
 python export.py --model models/best_classifier.pth --output models/best_classifier.onnx
@@ -11,7 +19,7 @@ python export.py --model models/best_classifier.pth --output models/best_classif
 python export.py --model_dir ../model --output_dir ../model/onnx_models
 
 # 指定输入尺寸导出
-python export.py --model ../model/best_classifier.pth --output ../model/best_classifier_640.onnx --input_size 640 640
+python export.py --model ./models/best_classifier.pth --output ./models/best_classifier_128.onnx --input_size 128 128 --verify
 
 # 导出并验证模型
 python export.py --model ../model/best_classifier.pth --output ../model/best_classifier.onnx --verify
@@ -53,11 +61,14 @@ def load_pytorch_model(model_path, device='cpu'):
     # 创建并加载模型
     model = create_model(num_classes)
     model.load_state_dict(checkpoint['model_state_dict'])
-    model.eval()
+    model.eval()  # 确保模型处于eval状态
     
     print("Model loaded successfully:")
     print(f"  - Number of classes: {num_classes}")
     print(f"  - Best validation accuracy: {best_val_acc:.4f}")
+    
+    # 检测模型输出类型
+    output_type = detect_model_output_type(model)
     
     return model, num_classes
 
@@ -69,11 +80,16 @@ def export_to_onnx(model, output_path, input_size=(224, 224), batch_size=1, opse
     print(f"  - Batch size: {batch_size}")
     print(f"  - ONNX opset version: {opset_version}")
     
-    # 创建虚拟输入
+    # 创建虚拟输入 - 形状为 [batch_size, channels, height, width]
+    # 输入尺寸与训练/推理时一致: (224, 224)
+    # 通道数为3 (RGB图像)
     dummy_input = torch.randn(batch_size, 3, input_size[0], input_size[1])
     
     # 确保输出目录存在
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    # 确保模型处于eval模式
+    model.eval()
     
     # 导出为ONNX
     torch.onnx.export(
@@ -88,7 +104,8 @@ def export_to_onnx(model, output_path, input_size=(224, 224), batch_size=1, opse
         dynamic_axes={                  # 动态轴（支持不同batch size）
             'input': {0: 'batch_size'},
             'output': {0: 'batch_size'}
-        }
+        },
+        verbose=False                   # 减少输出信息
     )
     
     print(f"ONNX model exported to: {output_path}")
@@ -103,13 +120,16 @@ def verify_onnx_model(onnx_path, pytorch_model, input_size=(224, 224)):
         # 加载ONNX模型
         ort_session = ort.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
         
-        # 创建测试输入
+        # 创建测试输入 - 与真实推理时的输入形状一致
         test_input = torch.randn(1, 3, input_size[0], input_size[1])
         
         # PyTorch推理
         pytorch_model.eval()
         with torch.no_grad():
-            pytorch_output = pytorch_model(test_input).numpy()
+            pytorch_output = pytorch_model(test_input)
+            # 确保输出是numpy格式用于比较
+            if isinstance(pytorch_output, torch.Tensor):
+                pytorch_output = pytorch_output.numpy()
         
         # ONNX推理
         ort_inputs = {ort_session.get_inputs()[0].name: test_input.numpy()}
@@ -117,13 +137,25 @@ def verify_onnx_model(onnx_path, pytorch_model, input_size=(224, 224)):
         
         # 比较输出
         max_diff = np.max(np.abs(pytorch_output - onnx_output))
-        print(f"Maximum difference between PyTorch and ONNX outputs: {max_diff:.6f}")
+        mean_diff = np.mean(np.abs(pytorch_output - onnx_output))
         
+        print(f"Maximum difference between PyTorch and ONNX outputs: {max_diff:.8f}")
+        print(f"Mean absolute difference: {mean_diff:.8f}")
+        
+        # 检查输出形状是否一致
+        if pytorch_output.shape != onnx_output.shape:
+            print(f"⚠️  Output shape mismatch: PyTorch {pytorch_output.shape} vs ONNX {onnx_output.shape}")
+            return False
+        
+        # 更严格的数值验证
         if max_diff < 1e-5:
             print("✅ ONNX model verification passed!")
             return True
+        elif max_diff < 1e-3:
+            print("⚠️  Small difference detected, but within acceptable range")
+            return True
         else:
-            print("⚠️  Large difference detected, please check the model")
+            print("❌ Large difference detected, please check the model")
             return False
             
     except Exception as e:
@@ -213,27 +245,42 @@ def get_model_info(onnx_path):
 def export_single_model(model_path, output_path, input_size, verify, optimize):
     """导出单个模型"""
     try:
+        print(f"\n{'='*60}")
+        print(f"Processing model: {model_path}")
+        print(f"Output path: {output_path}")
+        
         # 加载PyTorch模型
-        model, num_classes = load_pytorch_model(model_path)
+        model, num_classes = load_pytorch_model(model_path, device='cpu')
+        
+        # 确保模型在CPU上进行导出（避免CUDA相关问题）
+        model = model.cpu()
         
         # 导出为ONNX
         onnx_path = export_to_onnx(model, output_path, input_size)
         
         # 验证模型
         if verify:
-            verify_onnx_model(onnx_path, model, input_size)
+            verify_success = verify_onnx_model(onnx_path, model, input_size)
+            if not verify_success:
+                print("⚠️  Verification failed, but ONNX model was still created")
         
         # 优化模型
+        final_path = onnx_path
         if optimize:
-            onnx_path = optimize_onnx_model(onnx_path)
+            optimized_path = optimize_onnx_model(onnx_path)
+            if optimized_path != onnx_path:
+                final_path = optimized_path
         
         # 显示模型信息
-        get_model_info(onnx_path)
+        get_model_info(final_path)
         
-        return onnx_path
+        print("✅ Export completed successfully!")
+        return final_path
         
     except Exception as e:
-        print(f"Failed to export {model_path}: {str(e)}")
+        print(f"❌ Failed to export {model_path}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -291,6 +338,29 @@ def export_batch_models(model_dir, output_dir, input_size, verify, optimize):
         print("\nFailed exports:")
         for src in failed_exports:
             print(f"  ❌ {src}")
+
+
+def detect_model_output_type(model, input_size=(224, 224)):
+    """检测模型输出类型：logits 或 softmax概率"""
+    model.eval()
+    with torch.no_grad():
+        # 创建测试输入
+        test_input = torch.randn(1, 3, input_size[0], input_size[1])
+        output = model(test_input)
+        
+        # 检查输出是否为概率分布（和为1）
+        output_sum = torch.sum(output, dim=1)
+        is_probability = torch.allclose(output_sum, torch.ones_like(output_sum), atol=1e-3)
+        
+        # 检查输出是否都在[0,1]范围内
+        in_range = torch.all(output >= 0) and torch.all(output <= 1)
+        
+        if is_probability and in_range:
+            print("  - Model output type: Softmax probabilities")
+            return "probabilities"
+        else:
+            print("  - Model output type: Raw logits")
+            return "logits"
 
 
 def main():

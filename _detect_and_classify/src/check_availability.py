@@ -47,8 +47,8 @@ def check_onnx_model(model_path):
         result['file_exists'] = True
         result['file_size_mb'] = round(os.path.getsize(model_path) / (1024 * 1024), 2)
         
-        print(f"正在检查模型: {model_path}")
-        print(f"文件大小: {result['file_size_mb']} MB")
+        print(f"Checking model: {model_path}")
+        print(f"File size: {result['file_size_mb']} MB")
         
         # 加载ONNX模型
         model = onnx.load(model_path)
@@ -103,17 +103,17 @@ def check_onnx_model(model_path):
         try:
             session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
             result['is_valid'] = True
-            print("✓ 模型验证成功，可以正常加载和运行")
+            print("✓ Model validation successful, can be loaded and run normally")
         except Exception as e:
             result['error_message'] = f"模型无法创建推理会话: {str(e)}"
-            print(f"✗ 模型验证失败: {str(e)}")
+            print(f"✗ Model validation failed: {str(e)}")
         
     except onnx.checker.ValidationError as e:
         result['error_message'] = f"ONNX模型验证失败: {str(e)}"
-        print(f"✗ ONNX模型验证失败: {str(e)}")
+        print(f"✗ ONNX model validation failed: {str(e)}")
     except Exception as e:
         result['error_message'] = f"检查模型时发生错误: {str(e)}"
-        print(f"✗ 检查模型时发生错误: {str(e)}")
+        print(f"✗ Error occurred while checking model: {str(e)}")
     
     return result
 
@@ -126,43 +126,43 @@ def print_model_info(result):
         result (dict): check_onnx_model返回的结果字典
     """
     print("\n" + "="*60)
-    print("模型检查结果")
+    print("Model Check Results")
     print("="*60)
     
-    print(f"模型路径: {result['model_path']}")
-    print(f"文件存在: {'是' if result['file_exists'] else '否'}")
-    print(f"文件大小: {result['file_size_mb']} MB")
-    print(f"模型有效: {'是' if result['is_valid'] else '否'}")
+    print(f"Model path: {result['model_path']}")
+    print(f"File exists: {'Yes' if result['file_exists'] else 'No'}")
+    print(f"File size: {result['file_size_mb']} MB")
+    print(f"Model valid: {'Yes' if result['is_valid'] else 'No'}")
     
     if result['onnx_version']:
-        print(f"ONNX IR版本: {result['onnx_version']}")
+        print(f"ONNX IR version: {result['onnx_version']}")
     if result['opset_version']:
-        print(f"Opset版本: {result['opset_version']}")
+        print(f"Opset version: {result['opset_version']}")
     
     if result['error_message']:
-        print(f"错误信息: {result['error_message']}")
+        print(f"Error message: {result['error_message']}")
     
-    print("\n输入信息:")
+    print("\nInput information:")
     print("-" * 40)
     if result['input_info']:
         for i, input_info in enumerate(result['input_info']):
             shape_str = "x".join([str(s) for s in input_info['shape']])
-            print(f"  输入 {i+1}: {input_info['name']}")
-            print(f"    形状: [{shape_str}]")
-            print(f"    类型: {input_info['type']}")
+            print(f"  Input {i+1}: {input_info['name']}")
+            print(f"    Shape: [{shape_str}]")
+            print(f"    Type: {input_info['type']}")
     else:
-        print("  无输入信息")
+        print("  No input information")
     
-    print("\n输出信息:")
+    print("\nOutput information:")
     print("-" * 40)
     if result['output_info']:
         for i, output_info in enumerate(result['output_info']):
             shape_str = "x".join([str(s) for s in output_info['shape']])
-            print(f"  输出 {i+1}: {output_info['name']}")
-            print(f"    形状: [{shape_str}]")
-            print(f"    类型: {output_info['type']}")
+            print(f"  Output {i+1}: {output_info['name']}")
+            print(f"    Shape: [{shape_str}]")
+            print(f"    Type: {output_info['type']}")
     else:
-        print("  无输出信息")
+        print("  No output information")
 
 
 def scan_directory_for_onnx(directory):
@@ -210,14 +210,14 @@ def main():
                          if f.lower().endswith('.onnx')]
             onnx_files = [os.path.join(args.path, f) for f in onnx_files]
     else:
-        print(f"错误: 路径不存在或不是ONNX文件: {args.path}")
+        print(f"Error: Path does not exist or is not an ONNX file: {args.path}")
         sys.exit(1)
     
     if not onnx_files:
-        print(f"在指定路径中未找到ONNX文件: {args.path}")
+        print(f"No ONNX files found in the specified path: {args.path}")
         sys.exit(1)
     
-    print(f"找到 {len(onnx_files)} 个ONNX文件")
+    print(f"Found {len(onnx_files)} ONNX files")
     
     # 检查每个ONNX文件
     results = []
@@ -236,14 +236,14 @@ def main():
     total_models = len(results)
     
     print(f"\n{'='*80}")
-    print("检查汇总")
+    print("Check Summary")
     print("="*80)
-    print(f"总共检查: {total_models} 个模型")
-    print(f"有效模型: {valid_models} 个")
-    print(f"无效模型: {total_models - valid_models} 个")
+    print(f"Total checked: {total_models} models")
+    print(f"Valid models: {valid_models}")
+    print(f"Invalid models: {total_models - valid_models}")
     
     if valid_models < total_models:
-        print("\n无效模型列表:")
+        print("\nInvalid models list:")
         for result in results:
             if not result['is_valid']:
                 print(f"  - {result['model_path']}: {result['error_message']}")
