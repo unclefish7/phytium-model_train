@@ -11,8 +11,8 @@
         python inference.py --input <图像文件夹路径> --output <输出文件夹路径>
     
     完整参数:
-        python _detect_and_classify\src\inference.py --input E:\tt100k\phytium-model_train\yolo_dataset\yolo_dataset_one_cls\images\test --output _detect_and_classify\result --detect_model _detect_and_classify\models\detect_only_LowRes.onnx --classify_model _detect_and_classify\models\best_classifier.onnx --labels _detect_and_classify\label.yaml
-        
+        python src/inference.py --input /workspace/dataset/images/test --output ./result --detect_model ./models/detect_only_LowRes.onnx --classify_model ./models/best_classifier.onnx --labels ./label.yaml
+
         python inference.py \
             --input /path/to/images \
             --output /path/to/results \
@@ -87,12 +87,13 @@ import argparse
 import json
 from typing import List, Tuple, Dict
 import time
+import torch
 
 
 class TrafficSignDetector:
     """交通标志检测器"""
     
-    def __init__(self, model_path: str, conf_threshold: float = 0.5, nms_threshold: float = 0.45):
+    def __init__(self, model_path: str, conf_threshold: float = 0.1, nms_threshold: float = 0.45):
         self.model_path = model_path
         self.conf_threshold = conf_threshold
         self.nms_threshold = nms_threshold
@@ -104,14 +105,14 @@ class TrafficSignDetector:
         self.output_name = self.session.get_outputs()[0].name
         
     def preprocess(self, image: np.ndarray) -> np.ndarray:
-        """预处理图像"""
+        """预处理图像 - 使用letterbox缩放保持纵横比"""
         # 保存原始尺寸
         self.original_shape = image.shape[:2]
         
-        # Resize到模型输入尺寸
-        resized = cv2.resize(image, self.input_size)
+        # 使用letterbox缩放保持纵横比
+        resized, self.ratio, self.pad = self.letterbox(image, self.input_size)
         
-        # 归一化到[0,1]
+        # 归一化到[0,1]并转换为float32
         normalized = resized.astype(np.float32) / 255.0
         
         # 转换为CHW格式并添加batch维度
@@ -120,39 +121,69 @@ class TrafficSignDetector:
         
         return input_tensor
     
+    def letterbox(self, image: np.ndarray, new_shape=(640, 640), color=(114, 114, 114), auto=True, scale_fill=False, scaleup=True, stride=32):
+        """使用letterbox缩放图像，保持纵横比 - 基于YOLOv5的letterbox函数"""
+        shape = image.shape[:2]  # current shape [height, width]
+        if isinstance(new_shape, int):
+            new_shape = (new_shape, new_shape)
+
+        # Scale ratio (new / old)
+        r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+        if not scaleup:  # only scale down, do not scale up (for better test mAP)
+            r = min(r, 1.0)
+
+        # Compute padding
+        ratio = r, r  # width, height ratios
+        new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+        dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+        if auto:  # minimum rectangle
+            dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
+        elif scale_fill:  # stretch
+            dw, dh = 0.0, 0.0
+            new_unpad = (new_shape[1], new_shape[0])
+            ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]  # width, height ratios
+
+        dw /= 2  # divide padding into 2 sides
+        dh /= 2
+
+        if shape[::-1] != new_unpad:  # resize
+            image = cv2.resize(image, new_unpad, interpolation=cv2.INTER_LINEAR)
+        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+        image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
+        return image, ratio, (dw, dh)
+    
     def postprocess(self, output: np.ndarray) -> List[Dict]:
-        """后处理检测结果"""
-        # output shape: [1, 25200, 6] -> [x_center, y_center, width, height, confidence, class]
-        detections = output[0]  # Remove batch dimension
+        """后处理检测结果 - 基于YOLOv5的处理方式"""
+        # output shape: [1, 25200, 6] -> [x_center, y_center, width, height, objectness, class_prob]
+        # 注意：此检测模型只有检测能力，没有分类能力，所以只使用objectness作为置信度
+        detections = output[0]  # Remove batch dimension [25200, 6]
+        
+        # 获取objectness置信度（第5列是objectness，忽略第6列的类别概率）
+        objectness = detections[:, 4]  # objectness置信度
         
         # 过滤低置信度检测
-        conf_mask = detections[:, 4] >= self.conf_threshold
-        detections = detections[conf_mask]
-        
-        if len(detections) == 0:
+        conf_mask = objectness >= self.conf_threshold
+        if not np.any(conf_mask):
             return []
         
+        filtered_detections = detections[conf_mask]
+        filtered_confidences = objectness[conf_mask]
+        
         # 转换坐标格式 (center_x, center_y, w, h) -> (x1, y1, x2, y2)
-        boxes = np.copy(detections[:, :4])
-        boxes[:, 0] = detections[:, 0] - detections[:, 2] / 2  # x1
-        boxes[:, 1] = detections[:, 1] - detections[:, 3] / 2  # y1
-        boxes[:, 2] = detections[:, 0] + detections[:, 2] / 2  # x2
-        boxes[:, 3] = detections[:, 1] + detections[:, 3] / 2  # y2
+        boxes = np.copy(filtered_detections[:, :4])
+        boxes[:, 0] = filtered_detections[:, 0] - filtered_detections[:, 2] / 2  # x1
+        boxes[:, 1] = filtered_detections[:, 1] - filtered_detections[:, 3] / 2  # y1
+        boxes[:, 2] = filtered_detections[:, 0] + filtered_detections[:, 2] / 2  # x2
+        boxes[:, 3] = filtered_detections[:, 1] + filtered_detections[:, 3] / 2  # y2
         
-        # 转换坐标到原始图像尺寸
-        scale_x = self.original_shape[1] / self.input_size[0]
-        scale_y = self.original_shape[0] / self.input_size[1]
+        # 将坐标从letterbox空间转换回原始图像空间
+        boxes = self.scale_coords(self.input_size, boxes, self.original_shape)
         
-        boxes[:, [0, 2]] *= scale_x
-        boxes[:, [1, 3]] *= scale_y
-        
-        # NMS
-        confidences = detections[:, 4]
-        classes = detections[:, 5].astype(int)
-        
+        # NMS - 使用OpenCV的NMS实现
         indices = cv2.dnn.NMSBoxes(
             boxes.tolist(), 
-            confidences.tolist(), 
+            filtered_confidences.tolist(), 
             self.conf_threshold, 
             self.nms_threshold
         )
@@ -167,13 +198,30 @@ class TrafficSignDetector:
                 x2 = max(0, min(x2, self.original_shape[1] - 1))
                 y2 = max(0, min(y2, self.original_shape[0] - 1))
                 
+                # 检测模型只提供检测能力，类别设为0（通用目标）
                 results.append({
                     'bbox': [x1, y1, x2, y2],
-                    'confidence': float(confidences[i]),
-                    'class': int(classes[i])
+                    'confidence': float(filtered_confidences[i]),
+                    'class': 0  # 检测模型没有分类能力，统一设为0
                 })
         
         return results
+    
+    def scale_coords(self, img1_shape, coords, img0_shape, ratio_pad=None):
+        """将坐标从letterbox图像缩放回原始图像 - 基于YOLOv5的scale_boxes函数"""
+        if ratio_pad is None:  # calculate from img0_shape
+            gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain = old / new
+            pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
+        else:
+            gain = ratio_pad[0][0]
+            pad = ratio_pad[1]
+
+        coords[:, [0, 2]] -= pad[0]  # x padding
+        coords[:, [1, 3]] -= pad[1]  # y padding
+        coords[:, :4] /= gain
+        coords[:, [0, 2]] = coords[:, [0, 2]].clip(0, img0_shape[1])  # x1, x2
+        coords[:, [1, 3]] = coords[:, [1, 3]].clip(0, img0_shape[0])  # y1, y2
+        return coords
     
     def detect(self, image: np.ndarray) -> List[Dict]:
         """检测交通标志"""
@@ -201,11 +249,14 @@ class TrafficSignClassifier:
         self.num_classes = label_data['nc']
         
     def preprocess(self, image: np.ndarray) -> np.ndarray:
-        """预处理图像"""
-        # Resize到模型输入尺寸
-        resized = cv2.resize(image, self.input_size)
+        """预处理图像 - 确保与训练时一致"""
+        # Resize到模型输入尺寸，使用双线性插值
+        resized = cv2.resize(image, self.input_size, interpolation=cv2.INTER_LINEAR)
         
-        # 归一化到[0,1]
+        # 转换BGR到RGB (如果训练时使用RGB)
+        # resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        
+        # 归一化到[0,1]并转换为float32
         normalized = resized.astype(np.float32) / 255.0
         
         # 转换为CHW格式并添加batch维度
@@ -221,10 +272,19 @@ class TrafficSignClassifier:
         
         # 获取预测结果
         predictions = output[0][0]  # Remove batch dimension
+        
+        # 应用softmax激活函数
+        predictions = self.softmax(predictions)
+        
         class_id = np.argmax(predictions)
-        confidence = float(np.max(predictions))
+        confidence = float(predictions[class_id])
         
         return class_id, confidence
+    
+    def softmax(self, x):
+        """softmax激活函数"""
+        exp_x = np.exp(x - np.max(x))  # 减去最大值防止溢出
+        return exp_x / np.sum(exp_x)
 
 
 class TrafficSignInference:
@@ -239,7 +299,7 @@ class TrafficSignInference:
         # 读取图像
         image = cv2.imread(image_path)
         if image is None:
-            raise ValueError(f"无法读取图像: {image_path}")
+            raise ValueError(f"Unable to read image: {image_path}")
         
         # 检测交通标志
         detections = self.detector.detect(image)
@@ -278,7 +338,7 @@ class TrafficSignInference:
         """处理文件夹中的所有图像"""
         input_path = Path(input_folder)
         if not input_path.exists():
-            raise ValueError(f"输入文件夹不存在: {input_folder}")
+            raise ValueError(f"Input folder does not exist: {input_folder}")
         
         # 创建输出文件夹
         if output_folder:
@@ -291,17 +351,17 @@ class TrafficSignInference:
                       if f.suffix.lower() in image_extensions]
         
         if not image_files:
-            print(f"在文件夹 {input_folder} 中未找到图像文件")
+            print(f"No image files found in folder: {input_folder}")
             return {}
         
-        print(f"找到 {len(image_files)} 张图像")
+        print(f"Found {len(image_files)} images")
         
         all_results = {}
         total_detections = 0
         processing_times = []
         
         for i, image_file in enumerate(image_files):
-            print(f"处理 {i+1}/{len(image_files)}: {image_file.name}")
+            print(f"Processing {i+1}/{len(image_files)}: {image_file.name}")
             
             start_time = time.time()
             try:
@@ -317,10 +377,10 @@ class TrafficSignInference:
                     self.visualize_results(str(image_file), result, 
                                          str(output_path / f"result_{image_file.name}"))
                 
-                print(f"  检测到 {result['num_detections']} 个交通标志 (耗时: {processing_time:.3f}s)")
+                print(f"  Detected {result['num_detections']} traffic signs (Time: {processing_time:.3f}s)")
                 
             except Exception as e:
-                print(f"  处理失败: {e}")
+                print(f"  Processing failed: {e}")
                 continue
         
         # 统计信息
@@ -332,16 +392,6 @@ class TrafficSignInference:
             'avg_processing_time': np.mean(processing_times) if processing_times else 0,
             'total_processing_time': sum(processing_times)
         }
-        
-        # 保存结果
-        if output_folder:
-            results_file = output_path / "inference_results.json"
-            with open(results_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'statistics': stats,
-                    'results': all_results
-                }, f, ensure_ascii=False, indent=2)
-            print(f"结果已保存到: {results_file}")
         
         return {
             'statistics': stats,
@@ -392,11 +442,11 @@ def main():
     
     # 检查模型文件是否存在
     if not os.path.exists(args.detect_model):
-        raise FileNotFoundError(f"检测模型文件不存在: {args.detect_model}")
+        raise FileNotFoundError(f"Detection model file not found: {args.detect_model}")
     if not os.path.exists(args.classify_model):
-        raise FileNotFoundError(f"分类模型文件不存在: {args.classify_model}")
+        raise FileNotFoundError(f"Classification model file not found: {args.classify_model}")
     if not os.path.exists(args.labels):
-        raise FileNotFoundError(f"标签文件不存在: {args.labels}")
+        raise FileNotFoundError(f"Label file not found: {args.labels}")
     
     # 创建推理系统
     inference_system = TrafficSignInference(
@@ -406,19 +456,19 @@ def main():
     )
     
     # 处理图像
-    print("开始处理图像...")
+    print("Starting image processing...")
     results = inference_system.process_folder(args.input, args.output)
     
     # 打印统计信息
     stats = results['statistics']
     print("\n" + "="*50)
-    print("处理完成！统计信息:")
-    print(f"总图像数: {stats['total_images']}")
-    print(f"成功处理: {stats['processed_images']}")
-    print(f"总检测数: {stats['total_detections']}")
-    print(f"平均每张图像检测数: {stats['avg_detections_per_image']:.2f}")
-    print(f"平均处理时间: {stats['avg_processing_time']:.3f}s")
-    print(f"总处理时间: {stats['total_processing_time']:.3f}s")
+    print("Processing completed! Statistics:")
+    print(f"Total images: {stats['total_images']}")
+    print(f"Successfully processed: {stats['processed_images']}")
+    print(f"Total detections: {stats['total_detections']}")
+    print(f"Average detections per image: {stats['avg_detections_per_image']:.2f}")
+    print(f"Average processing time: {stats['avg_processing_time']:.3f}s")
+    print(f"Total processing time: {stats['total_processing_time']:.3f}s")
     print("="*50)
 
 

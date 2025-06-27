@@ -5,6 +5,8 @@ ONNX模型可用性检查脚本
 检查ONNX模型是否可用，以及输入输出形状
 """
 
+# 使用方法：python src/check_availability.py .\models 
+
 import os
 import sys
 import argparse

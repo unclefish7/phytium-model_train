@@ -14,6 +14,8 @@ RUN pip install --upgrade pip && \
     pip install -r requirements.txt && \
     pip install timm && \
     pip install matplotlib numpy scikit-learn tqdm && \
+    pip install onnx onnxruntime onnxruntime-gpu && \
+    pip install opencv-python pyyaml && \
     python --version
 
 # 写入 tmux 配置文件，开启鼠标支持 + 分屏热键优化

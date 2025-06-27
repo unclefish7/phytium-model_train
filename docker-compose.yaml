@@ -1,6 +1,6 @@
 services:
   yolov5-dev:
-    image: yolov5:v3
+    image: yolov5:v5
     container_name: yolo
     runtime: nvidia
     shm_size: 32g
@@ -9,9 +9,11 @@ services:
     volumes:
       - ./yolov5:/workspace/yolov5
       - ./traffic_sign_classifier:/workspace/traffic_sign_classifier
+      - ./_detect_and_classify:/workspace/_detect_and_classify
       - ./model:/workspace/model
       - ./yolo_dataset/yolo_dataset_one_cls:/workspace/dataset
       - ./yolo_dataset/yolo_dataset_classify:/workspace/dataset_classify
+      - ./utils:/workspace/utils
     working_dir: /workspace
     stdin_open: true
     tty: true

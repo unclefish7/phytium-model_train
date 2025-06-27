@@ -4,11 +4,11 @@ python train.py --batch-size 16 --epochs 100 --name simple_net_finetune_ --cfg m
 ```
 
 ```bash
-python train.py --batch-size 32 --epochs 200 --name detect_only_LowRes_ --cfg models/yolov5_mobilenetv4_small.yaml --data /workspace/dataset/tt100k.yaml --weights runs/train/simple_net_one_cls/weights/best.pt --device 0 --image-weights --hyp data/hyps/hpy.detect-LowRes.yaml --img 640
+python train.py --batch-size 32 --epochs 200 --name detect_only_LowRes_ --cfg models/yolov5_mobilenetv4_small.yaml --data /workspace/dataset/tt100k.yaml --weights runs/train/detect_only_LowRes_/weights/best.pt --device 0 --image-weights --hyp data/hyps/hpy.detect-LowRes.yaml --img 640
 ```
 
 ```bash
-python detect.py --weights runs/train/simple_net_one_cls/weights/best.pt --source /workspace/dataset/images/test  --img 2048
+python detect.py --weights runs/train/detect_only_LowRes_/weights/best.pt --source /workspace/dataset/images/test  --img 640
 ```
 
 ```bash
