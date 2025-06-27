@@ -1,0 +1,37 @@
+# Traffic sign classification labels
+# Based on folder names in the dataset directory
+
+names:
+  0: i2
+  1: i4
+  2: i5
+  3: il60
+  4: il80
+  5: ilo
+  6: io
+  7: ip
+  8: o
+  9: p10
+  10: p11
+  11: p23
+  12: p26
+  13: p5
+  14: pho
+  15: pl100
+  16: pl120
+  17: pl30
+  18: pl40
+  19: pl5
+  20: pl50
+  21: pl60
+  22: pl80
+  23: plo
+  24: pmo
+  25: pn
+  26: pne
+  27: po
+  28: pro
+  29: w57
+  30: wo
+
+nc: 31  # number of classes

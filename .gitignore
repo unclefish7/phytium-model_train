@@ -12,3 +12,4 @@ __pycache__
 traffic_sign_classifier/models/
 traffic_sign_classifier/classification_results/
 traffic_sign_classifier/test/
+_detect_and_classify/result/
