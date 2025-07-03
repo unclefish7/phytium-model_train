@@ -13,6 +13,7 @@ services:
       - ./model:/workspace/model
       - ./yolo_dataset/yolo_dataset_one_cls:/workspace/dataset
       - ./yolo_dataset/yolo_dataset_classify:/workspace/dataset_classify
+      - ./yolo_dataset/yolo_dataset_detect_classify:/workspace/dataset_detect_classify
       - ./utils:/workspace/utils
     working_dir: /workspace
     stdin_open: true
