@@ -75,10 +75,10 @@ METRICS_DIR = os.path.join(OUTPUT_DIR, "metrics")
 # 评估参数
 IOU_THRESHOLD = 0.5  # IoU阈值用于判断检测是否正确
 CONFIDENCE_THRESHOLDS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]  # 用于PR曲线
-MAX_EVAL_IMAGES = 20000  # 最大评估图像数量（避免过长运行时间）
+MAX_EVAL_IMAGES = 1000  # 最大评估图像数量（减少到1000）
 
 # 数据增强参数
-AUGMENTATION_PROBABILITY = 0.3  # 应用数据增强的概率
+AUGMENTATION_PROBABILITY = 0.5  # 降低增强概率
 ENABLE_AUGMENTATION = True  # 是否启用数据增强
 
 # 示例图片数量配置
@@ -170,23 +170,7 @@ class WeatherAugmentation:
         """调整亮度"""
         return np.clip(image * factor, 0, 255).astype(np.uint8)
     
-    @staticmethod
-    def add_noise(image: np.ndarray, noise_type: str = 'gaussian') -> np.ndarray:
-        """添加噪声"""
-        if noise_type == 'gaussian':
-            noise = np.random.normal(0, 25, image.shape).astype(np.uint8)
-            return np.clip(image.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-        elif noise_type == 'salt_pepper':
-            result = image.copy()
-            # 盐噪声
-            salt = np.random.random(image.shape[:2]) < 0.01
-            result[salt] = 255
-            # 胡椒噪声
-            pepper = np.random.random(image.shape[:2]) < 0.01
-            result[pepper] = 0
-            return result
-        else:
-            return image
+
     
     @staticmethod
     def add_motion_blur(image: np.ndarray, size: int = 15) -> np.ndarray:
@@ -199,31 +183,32 @@ class WeatherAugmentation:
     
     @staticmethod
     def simulate_lens_distortion(image: np.ndarray, strength: float = 0.2) -> np.ndarray:
-        """模拟镜头畸变"""
+        """模拟镜头畸变（优化版本）"""
         h, w = image.shape[:2]
         
-        # 创建网格
-        map_x = np.zeros((h, w), dtype=np.float32)
-        map_y = np.zeros((h, w), dtype=np.float32)
+        # 使用numpy向量化操作代替嵌套循环
+        x, y = np.meshgrid(np.arange(w), np.arange(h))
         
         center_x, center_y = w / 2, h / 2
         
-        for y in range(h):
-            for x in range(w):
-                # 计算距离中心的距离
-                dx = x - center_x
-                dy = y - center_y
-                r = np.sqrt(dx*dx + dy*dy)
-                
-                # 应用畸变
-                r_distorted = r * (1 + strength * (r / max(w, h))**2)
-                
-                if r > 0:
-                    map_x[y, x] = center_x + dx * r_distorted / r
-                    map_y[y, x] = center_y + dy * r_distorted / r
-                else:
-                    map_x[y, x] = x
-                    map_y[y, x] = y
+        # 向量化计算
+        dx = x - center_x
+        dy = y - center_y
+        r = np.sqrt(dx*dx + dy*dy)
+        
+        # 应用畸变
+        max_dim = max(w, h)
+        r_distorted = r * (1 + strength * (r / max_dim)**2)
+        
+        # 避免除零
+        mask = r > 0
+        map_x = np.zeros_like(x, dtype=np.float32)
+        map_y = np.zeros_like(y, dtype=np.float32)
+        
+        map_x[mask] = center_x + dx[mask] * r_distorted[mask] / r[mask]
+        map_y[mask] = center_y + dy[mask] * r_distorted[mask] / r[mask]
+        map_x[~mask] = x[~mask]
+        map_y[~mask] = y[~mask]
         
         return cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR)
     
@@ -554,7 +539,8 @@ class ResultVisualizer:
             # 创建网格图像
             fig, axes = plt.subplots(GRID_SIZE[0], GRID_SIZE[1], 
                                    figsize=(15, 10))
-            fig.suptitle(f'Detection Examples - {group_name.replace("_", " ").title()}', 
+            fig.suptitle(f'Detection Examples - {group_name.replace("_", " ").title()}\n'
+                        f'Green: Predictions, Blue: Ground Truth', 
                         fontsize=16)
             
             axes_flat = axes.flatten() if GRID_SIZE[0] * GRID_SIZE[1] > 1 else [axes]
@@ -562,28 +548,54 @@ class ResultVisualizer:
             for idx, result in enumerate(selected[:len(axes_flat)]):
                 ax = axes_flat[idx]
                 
-                # 读取并显示图像
-                image = cv2.imread(result['image_path'])
+                # 使用增强后的图像
+                if 'augmented_image' in result:
+                    image = result['augmented_image'].copy()
+                else:
+                    # 兼容性：如果没有增强图像，使用原始图像
+                    image = cv2.imread(result['image_path'])
+                
                 if image is not None:
-                    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                    ax.imshow(image_rgb)
-                    
-                    # 绘制检测框
+                    # 在图像上绘制检测框
                     for detection in result['detections']:
                         bbox = detection['bbox']
                         class_name = detection['class_name']
                         confidence = detection['combined_confidence']
                         
-                        rect = Rectangle((bbox[0], bbox[1]), 
-                                       bbox[2] - bbox[0], bbox[3] - bbox[1],
-                                       linewidth=2, edgecolor='red', facecolor='none')
-                        ax.add_patch(rect)
+                        # 绘制检测框
+                        x1, y1, x2, y2 = [int(coord) for coord in bbox]
+                        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         
-                        # 添加标签
-                        ax.text(bbox[0], bbox[1] - 10, 
-                               f'{class_name}: {confidence:.2f}',
-                               bbox={'boxstyle': "round,pad=0.3", 'facecolor': "yellow", 'alpha': 0.7},
-                               fontsize=8)
+                        # 添加标签背景
+                        label_text = f'{class_name}: {confidence:.2f}'
+                        (text_width, text_height), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                        cv2.rectangle(image, (x1, y1 - text_height - 10), (x1 + text_width, y1), (0, 255, 0), -1)
+                        
+                        # 添加文本标签
+                        cv2.putText(image, label_text, (x1, y1 - 5),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                    
+                    # 同时绘制真实标注框（蓝色）
+                    if 'ground_truths' in result:
+                        img_height, img_width = image.shape[:2]
+                        for gt in result['ground_truths']:
+                            # 转换YOLO格式到像素坐标
+                            x_center = gt['x_center'] * img_width
+                            y_center = gt['y_center'] * img_height
+                            width = gt['width'] * img_width
+                            height = gt['height'] * img_height
+                            
+                            x1 = int(x_center - width / 2)
+                            y1 = int(y_center - height / 2)
+                            x2 = int(x_center + width / 2)
+                            y2 = int(y_center + height / 2)
+                            
+                            # 绘制真实标注框（蓝色）
+                            cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                    
+                    # 转换BGR到RGB用于matplotlib显示
+                    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    ax.imshow(image_rgb)
                 
                 ax.set_title(f'Max Conf: {result["max_confidence"]:.3f}')
                 ax.axis('off')
@@ -771,6 +783,38 @@ class ResultVisualizer:
                 f.write(f"    Recall: {metric['recall']:.4f}\n")
                 f.write(f"    TP: {metric['tp_count']}, FP: {metric['fp_count']}, FN: {metric['fn_count']}\n\n")
     
+    def debug_class_distribution(self, image_results: List[Dict]):
+        """调试函数：检查数据中的类别分布"""
+        gt_class_counts = defaultdict(int)
+        pred_class_counts = defaultdict(int)
+        
+        print("=== 类别分布调试信息 ===")
+        print(f"定义的类别数量: {len(self.class_names)} (ID: 0-{len(self.class_names)-1})")
+        print(f"类别名称: {list(self.class_names.values()) if isinstance(self.class_names, dict) else self.class_names}")
+        
+        for result in image_results:
+            # 统计真实标签
+            for gt in result['ground_truths']:
+                class_id = gt['class_id']
+                gt_class_counts[class_id] += 1
+                if class_id >= len(self.class_names):
+                    print(f"警告: 发现超范围的真实类别ID: {class_id}")
+            
+            # 统计预测标签
+            for pred in result['detections']:
+                class_id = pred['class_id']
+                pred_class_counts[class_id] += 1
+                if class_id >= len(self.class_names):
+                    print(f"警告: 发现超范围的预测类别ID: {class_id}")
+        
+        print(f"真实标签中的唯一类别ID: {sorted(gt_class_counts.keys())}")
+        print(f"预测标签中的唯一类别ID: {sorted(pred_class_counts.keys())}")
+        print(f"真实标签类别范围: {min(gt_class_counts.keys()) if gt_class_counts else 'N/A'} - {max(gt_class_counts.keys()) if gt_class_counts else 'N/A'}")
+        print(f"预测标签类别范围: {min(pred_class_counts.keys()) if pred_class_counts else 'N/A'} - {max(pred_class_counts.keys()) if pred_class_counts else 'N/A'}")
+        print("=== 调试信息结束 ===\n")
+        
+        return gt_class_counts, pred_class_counts
+
     def plot_confusion_matrix(self, image_results: List[Dict]):
         """绘制混淆矩阵"""
         y_true = []
@@ -783,22 +827,35 @@ class ResultVisualizer:
             
             # 简单匹配：每个真实标签对应最近的预测
             for gt_class in gt_classes:
+                # 确保类别ID在有效范围内
+                if gt_class >= len(self.class_names):
+                    print(f"Warning: Found class_id {gt_class} which exceeds defined classes (max: {len(self.class_names)-1})")
+                    continue
+                    
                 if pred_classes:
                     # 使用最高置信度的预测
                     best_pred = max(result['detections'], key=lambda x: x['combined_confidence'])
+                    pred_class = best_pred['class_id']
+                    
+                    # 确保预测类别ID在有效范围内
+                    if pred_class >= len(self.class_names):
+                        print(f"Warning: Found predicted class_id {pred_class} which exceeds defined classes (max: {len(self.class_names)-1})")
+                        continue
+                        
                     y_true.append(gt_class)
-                    y_pred.append(best_pred['class_id'])
+                    y_pred.append(pred_class)
                 else:
-                    # 没有预测，标记为错误分类（使用-1）
-                    y_true.append(gt_class)
-                    y_pred.append(-1)  # 表示漏检
+                    # 没有预测时跳过，不使用-1标记
+                    continue
         
         if not y_true or not y_pred:
             return
         
+        # 确保所有标签都在有效范围内
+        valid_labels = list(range(len(self.class_names)))
+        
         # 计算混淆矩阵
-        labels = list(range(len(self.class_names)))
-        cm = confusion_matrix(y_true, y_pred, labels=labels)
+        cm = confusion_matrix(y_true, y_pred, labels=valid_labels)
         
         # 绘制混淆矩阵
         plt.figure(figsize=(12, 10))
@@ -817,13 +874,18 @@ class ResultVisualizer:
         
         # 生成分类报告
         try:
-            report = classification_report(y_true, y_pred, 
-                                         target_names=self.class_names,
-                                         output_dict=True, zero_division=0)
-            
-            # 保存分类报告
-            with open(self.metrics_dir / 'classification_report.json', 'w') as f:
-                json.dump(report, f, indent=2)
+            # 确保标签数量匹配
+            if len(set(y_true + y_pred)) <= len(self.class_names):
+                report = classification_report(y_true, y_pred, 
+                                             target_names=self.class_names,
+                                             labels=valid_labels,
+                                             output_dict=True, zero_division=0)
+                
+                # 保存分类报告
+                with open(self.metrics_dir / 'classification_report.json', 'w') as f:
+                    json.dump(report, f, indent=2)
+            else:
+                print("Warning: Skipping classification report due to label mismatch")
                 
         except Exception as e:
             print(f"Warning: Could not generate classification report: {e}")
@@ -892,6 +954,64 @@ class ResultVisualizer:
                    dpi=150, bbox_inches='tight')
         plt.close()
 
+    def save_augmentation_comparison(self, image_results: List[Dict]):
+        """保存数据增强前后对比图"""
+        if not image_results:
+            return
+        
+        # 选择一些有检测结果的图像进行对比
+        images_with_detections = [r for r in image_results if r['detections']]
+        if not images_with_detections:
+            return
+        
+        # 随机选择几张图片
+        num_comparisons = min(4, len(images_with_detections))
+        selected = random.sample(images_with_detections, num_comparisons)
+        
+        fig, axes = plt.subplots(num_comparisons, 2, figsize=(15, 4 * num_comparisons))
+        if num_comparisons == 1:
+            axes = axes.reshape(1, -1)
+        
+        fig.suptitle('Data Augmentation Comparison\nLeft: Original, Right: Augmented with Detections', fontsize=16)
+        
+        for idx, result in enumerate(selected):
+            # 原始图像
+            original_image = cv2.imread(result['image_path'])
+            if original_image is not None:
+                original_rgb = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
+                axes[idx, 0].imshow(original_rgb)
+                axes[idx, 0].set_title(f'Original - {Path(result["image_path"]).name}')
+                axes[idx, 0].axis('off')
+            
+            # 增强后的图像（带检测框）
+            if 'augmented_image' in result:
+                augmented_image = result['augmented_image'].copy()
+                
+                # 绘制检测框
+                for detection in result['detections']:
+                    bbox = detection['bbox']
+                    class_name = detection['class_name']
+                    confidence = detection['combined_confidence']
+                    
+                    x1, y1, x2, y2 = [int(coord) for coord in bbox]
+                    cv2.rectangle(augmented_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    
+                    label_text = f'{class_name}: {confidence:.2f}'
+                    (text_width, text_height), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                    cv2.rectangle(augmented_image, (x1, y1 - text_height - 10), (x1 + text_width, y1), (0, 255, 0), -1)
+                    cv2.putText(augmented_image, label_text, (x1, y1 - 5),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                
+                augmented_rgb = cv2.cvtColor(augmented_image, cv2.COLOR_BGR2RGB)
+                axes[idx, 1].imshow(augmented_rgb)
+                axes[idx, 1].set_title(f'Augmented + Detections (Conf: {result["max_confidence"]:.3f})')
+                axes[idx, 1].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(self.examples_dir / 'augmentation_comparison.png', 
+                   dpi=150, bbox_inches='tight')
+        plt.close()
+
     # ...existing code...
 def apply_augmentation(image: np.ndarray) -> np.ndarray:
     """应用随机数据增强"""
@@ -915,18 +1035,34 @@ def apply_augmentation(image: np.ndarray) -> np.ndarray:
         
         # 光照和对比度
         lambda x: WeatherAugmentation.adjust_brightness(x, random.uniform(0.6, 1.4)),
-        lambda x: WeatherAugmentation.adjust_contrast(x, random.uniform(0.8, 1.5)),
         lambda x: WeatherAugmentation.add_shadow(x, random.randint(1, 3)),
         
-        # 噪声和畸变
-        lambda x: WeatherAugmentation.add_noise(x, random.choice(['gaussian', 'salt_pepper'])),
+        # 畸变
         lambda x: WeatherAugmentation.simulate_lens_distortion(x, random.uniform(0.1, 0.3))
     ]
     
-    # 随机应用1-3种增强
-    num_augmentations = random.randint(1, 3)
-    selected_augmentations = random.sample(augmentation_types, 
-                                         min(num_augmentations, len(augmentation_types)))
+    # 随机应用1-2种增强（减少增强数量）
+    num_augmentations = random.randint(1, 2)
+    # 排除最耗时的增强操作
+    fast_augmentation_types = [
+        # 天气效果
+        lambda x: WeatherAugmentation.add_rain(x, random.uniform(0.1, 0.4)),
+        lambda x: WeatherAugmentation.add_snow(x, random.uniform(0.1, 0.3)),
+        lambda x: WeatherAugmentation.add_fog(x, random.uniform(0.2, 0.5)),
+        
+        # 简单模糊效果
+        lambda x: WeatherAugmentation.add_blur(x, random.uniform(0.1, 0.4)),
+        
+        # 物理损坏
+        lambda x: WeatherAugmentation.add_dirt_spots(x, random.randint(2, 5)),
+        lambda x: WeatherAugmentation.add_scratches(x, random.randint(1, 3)),
+        
+        # 光照
+        lambda x: WeatherAugmentation.adjust_brightness(x, random.uniform(0.7, 1.3)),
+    ]
+    
+    selected_augmentations = random.sample(fast_augmentation_types, 
+                                         min(num_augmentations, len(fast_augmentation_types)))
     
     result = image.copy()
     for aug_func in selected_augmentations:
@@ -1014,16 +1150,15 @@ def main():
             # 应用数据增强
             augmented_image = apply_augmentation(image)
             
-            # 临时保存增强后的图像用于推理
-            temp_image_path = f"/tmp/temp_augmented_{i}.jpg"
-            cv2.imwrite(temp_image_path, augmented_image)
-            
-            # 进行推理
-            predictions = inference_system.process_image(temp_image_path)
-            
-            # 清理临时文件
-            if os.path.exists(temp_image_path):
-                os.remove(temp_image_path)
+            # 使用内存临时文件或直接传递数组
+            if hasattr(inference_system, 'process_image_array'):
+                predictions = inference_system.process_image_array(augmented_image)
+            else:
+                # 使用内存缓冲区避免磁盘I/O
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=True) as temp_file:
+                    cv2.imwrite(temp_file.name, augmented_image)
+                    predictions = inference_system.process_image(temp_file.name)
             
             # 加载真实标注
             ground_truths = dataset_loader.load_annotations(image_path)
@@ -1035,6 +1170,7 @@ def main():
             max_confidence = max([p['combined_confidence'] for p in predictions]) if predictions else 0.0
             image_results.append({
                 'image_path': str(image_path),
+                'augmented_image': augmented_image,  # 保存增强后的图像
                 'detections': predictions,
                 'ground_truths': ground_truths,
                 'max_confidence': max_confidence
@@ -1042,14 +1178,16 @@ def main():
             
             total_detections += len(predictions)
             
-            # 显示进度
-            if (i + 1) % 50 == 0 or (i + 1) == len(image_list):
+            # 显示进度（更频繁）
+            if (i + 1) % 20 == 0 or (i + 1) == len(image_list):
                 elapsed = time.time() - start_time
                 avg_time = elapsed / (i + 1)
                 eta = avg_time * (len(image_list) - i - 1)
+                fps = (i + 1) / elapsed
                 print(f"Progress: {i+1}/{len(image_list)} ({(i+1)/len(image_list)*100:.1f}%), "
                       f"Detections: {total_detections}, "
-                      f"Time: {elapsed:.1f}s, ETA: {eta:.1f}s")
+                      f"Time: {elapsed:.1f}s, ETA: {eta:.1f}s, "
+                      f"Speed: {fps:.2f} img/s")
         
         except Exception as e:
             print(f"Error processing image {image_path}: {e}")
@@ -1086,9 +1224,14 @@ def main():
     print("\nGenerating visualizations...")
     try:
         visualizer.save_example_images(image_results)
+        visualizer.save_augmentation_comparison(image_results)
         visualizer.plot_confidence_distribution(image_results)
         visualizer.plot_class_performance(final_metrics)
         visualizer.plot_pr_curve(metrics_calculator)
+        
+        # 添加调试信息
+        visualizer.debug_class_distribution(image_results)
+        
         visualizer.plot_confusion_matrix(image_results)
         visualizer.plot_detection_statistics(image_results)
         visualizer.save_metrics_summary(final_metrics, processing_time, 
@@ -1096,6 +1239,7 @@ def main():
         
         print(f"Evaluation completed! Results saved to: {OUTPUT_DIR}")
         print(f"  - Example images: {EXAMPLES_DIR}")
+        print(f"  - Augmentation comparison: {EXAMPLES_DIR}/augmentation_comparison.png")
         print(f"  - Metrics charts: {METRICS_DIR}")
         print(f"  - Confusion matrix: {METRICS_DIR}/confusion_matrix.png")
         print(f"  - Detection statistics: {METRICS_DIR}/detection_statistics.png")
